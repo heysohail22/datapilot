@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = "placeholder_gemini_key"
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     GROQ_API_KEY: str = "placeholder_groq_key"
+    FRONTEND_URL: str = "http://localhost:3000"
+    CORS_ORIGINS: str = ""
 
     model_config = SettingsConfigDict(env_file=str(ENV_FILE), extra="ignore")
 

@@ -28,18 +28,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-origins = [
-    "http://localhost:3000",
-    "https://datapilot.duckdns.org",
-    "http://datapilot.duckdns.org",
+from app.config import settings
+
+# Parse origins from FRONTEND_URL and/or CORS_ORIGINS
+raw_origins = f"{settings.FRONTEND_URL},{settings.CORS_ORIGINS}"
+origins_from_config = [
+    origin.strip()
+    for origin in raw_origins.split(",")
+    if origin.strip()
 ]
+
+# Ensure localhost is always allowed for local development
+default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+all_origins = list(dict.fromkeys(origins_from_config + default_origins))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=all_origins,
+    allow_origin_regex=r"^https:\/\/.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Mount API router
@@ -47,4 +60,6 @@ app.include_router(api_router)
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

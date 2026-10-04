@@ -44,16 +44,23 @@ interface ApiMessage {
 
 function getBackendUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
-  if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
-    return envUrl;
+  if (envUrl && envUrl.trim() !== "") {
+    return envUrl.trim().replace(/\/+$/, "");
   }
+  // Default to localhost:8000 when developing locally in the browser
+  if (
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ) {
+    return "http://localhost:8000";
+  }
+  // In production (e.g. Vercel) if envUrl wasn't set, warn in console
   if (typeof window !== "undefined") {
-    // In production on a domain (e.g. datapilot.duckdns.org), use relative path so Nginx routes /api/
-    if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
-      return "";
-    }
+    console.warn(
+      "[DataPilot] NEXT_PUBLIC_API_URL is not set. Please configure your Render backend URL in your Vercel project environment variables."
+    );
   }
-  return envUrl || "http://localhost:8000";
+  return "";
 }
 
 export default function Home() {
@@ -385,7 +392,7 @@ export default function Home() {
                     ? {
                         ...m,
                         content:
-                          `I encountered an issue connecting to the backend service. Please check your backend connection at ${backendUrl || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")}.`,
+                          `I encountered an issue connecting to the backend service (${backendUrl || "not configured"}). Please verify that your Render backend is active and that NEXT_PUBLIC_API_URL is configured in your Vercel project environment variables.`,
                         isStreaming: false,
                       }
                     : m
