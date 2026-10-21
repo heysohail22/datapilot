@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from app.agent.contracts import AnswerDraft, ExecutionResult
 from app.api.schemas import ChatRequest
-from tests.helpers import FakeExecutor, FakeLLM, decision, draft
+from ..helpers import FakeExecutor, FakeLLM, decision, draft
 
 
 def ask(service, message="Revenue last month", owner="alice", conversation_id=None):

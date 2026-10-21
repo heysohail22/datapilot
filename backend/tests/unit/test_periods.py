@@ -1,6 +1,6 @@
 from datetime import date
 import pytest
-from tests.helpers import decision
+from ..helpers import decision
 from app.business.periods import resolve_plan
 
 

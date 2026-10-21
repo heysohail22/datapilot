@@ -7,7 +7,7 @@ from app.agent.graph import create_agent_graph
 from app.config import Settings
 from app.services.chat_service import ChatService
 from app.services.conversations import ConversationStore
-from tests.helpers import FakeCatalog, FakeExecutor, FakeLLM, decision, draft
+from .helpers import FakeCatalog, FakeExecutor, FakeLLM, decision, draft
 
 
 @pytest.fixture
