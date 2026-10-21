@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -131,9 +131,16 @@ class ChatService:
             if plan:
                 from app.business.metrics import METRICS
 
-                message += f"\n\nMetric: {METRICS[plan.metric_id].meaning}. Period: {plan.period_start} to {plan.period_end_exclusive} (end exclusive), {plan.timezone}."
+                message += f"\n\nMetric: {METRICS[plan.metric_id].meaning}. Period: {plan.period_start} through {plan.period_end_exclusive - timedelta(days=1)}, {plan.timezone}."
                 if plan.comparison_start:
-                    message += f" Comparison: {plan.comparison_start} to {plan.comparison_end_exclusive} (end exclusive)."
+                    message += f" Comparison: {plan.comparison_start} through {plan.comparison_end_exclusive - timedelta(days=1)}."
+            if (
+                plan
+                and decision
+                and decision.period_request
+                and decision.period_request.kind in {"current_month", "current_year"}
+            ):
+                message += " Completed days only; today is excluded."
             if plan and plan.filters:
                 message += " Filters: " + "; ".join(
                     f"{f.field} {f.operator} {f.values}" for f in plan.filters
@@ -190,7 +197,10 @@ class ChatService:
             if status == "clarification":
                 context = {
                     "pending_question": state["question"],
-                    "previous_context": conv.context,
+                    "normalized_question": decision.normalized_question,
+                    "previous_context": (conv.context or {}).get(
+                        "previous_context", conv.context
+                    ),
                     "clarification": decision.clarification_question,
                 }
             try:

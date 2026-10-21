@@ -209,3 +209,21 @@ def test_output_secrets_redacted(factory):
     )
     result = ask(service, "hello")
     assert "gsk_this_is_a_fake_key" not in result.message
+
+
+def test_repeated_clarification_context_is_not_recursive(factory):
+    async def scenario():
+        service, *_ = factory(
+            FakeLLM([decision("needs_clarification"), decision("needs_clarification")])
+        )
+        first = await service.chat(ChatRequest(message="Show profit"), "alice")
+        second = await service.chat(
+            ChatRequest(message="Gross margin", conversation_id=first.conversation_id),
+            "alice",
+        )
+        context = service.conversations._items[second.conversation_id].context
+        assert context["previous_context"] is None
+        assert context["pending_question"] == "Gross margin"
+        assert context["normalized_question"]
+
+    asyncio.run(scenario())
