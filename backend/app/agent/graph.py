@@ -1,164 +1,54 @@
-from typing import Any, Dict, List, Optional
-from langgraph.graph import StateGraph, START, END
+"""Four-node graph with injected boundaries and deterministic edges."""
 
+import logging
+import time
+from functools import partial
+from langgraph.graph import END, START, StateGraph
 from app.agent.state import AgentState
-from app.agent.nodes import (
-    router_node,
-    sql_node,
-    heal_node,
-    stats_node,
-    email_node,
-    synthesis_node,
-)
+from app.agent.routing import after_executor, after_generator, after_router
+from app.agent.nodes.router import router
+from app.agent.nodes.sql_generator import sql_generator
+from app.agent.nodes.sql_executor import sql_executor
+from app.agent.nodes.answer import answer
+
+logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------
-# Conditional Edge Routers
-# ---------------------------------------------------------
+def measured(name, node):
+    async def run(state):
+        start = time.monotonic()
+        try:
+            return await node(state)
+        finally:
+            logger.info(
+                "node_complete request_id=%s node=%s duration_ms=%.1f repair_count=%s",
+                state.get("request_id"),
+                name,
+                (time.monotonic() - start) * 1000,
+                state.get("repair_count", 0),
+            )
 
-def route_after_entry(state: AgentState) -> str:
-    """
-    Evaluates outcome of the Router Node:
-    1. General chat / Identity / Policy violation ➔ synthesis_node (instant return)
-    2. Business data query / Statistical analysis / Email action ➔ sql_node (for pure DB execution)
-    """
-    intent = state.get("intent", "data_query")
-
-    if intent in ("general_chat", "policy_violation"):
-        return "synthesis_node"
-
-    return "sql_node"
-
-
-def route_after_sql(state: AgentState) -> str:
-    """
-    Evaluates outcome of database execution in sql_node:
-    1. Failed query and retries < 2 ➔ heal_node (Self-Healing Loop)
-    2. Failed query and retries >= 2 ➔ synthesis_node (Error fallback)
-    3. Statistical analysis intent ➔ stats_node
-    4. Email action intent ➔ email_node
-    5. Standard data query ➔ synthesis_node
-    """
-    rows = state.get("query_results")
-    retry_count = state.get("retry_count", 0)
-
-    # Failed query branch
-    if rows is None:
-        if retry_count < 2:
-            return "heal_node"
-        return "synthesis_node"
-
-    # Successful branch
-    intent = state.get("intent", "data_query")
-    if intent == "statistical_analysis":
-        return "stats_node"
-    elif intent == "email_action":
-        return "email_node"
-    return "synthesis_node"
+    return run
 
 
-# ---------------------------------------------------------
-# Graph Construction
-# ---------------------------------------------------------
-
-def create_agent_graph() -> StateGraph:
-    """
-    Assembles the Decoupled High-Performance DataPilot LangGraph:
-    START ➔ router_node ──(general_chat)──────────────▶ synthesis_node ➔ END
-                       └──(data/stats/email)──▶ sql_node
-                                                  │──(success: data) ────────▶ synthesis_node
-                                                  │──(success: stats) ───────▶ stats_node ──▶ synthesis_node
-                                                  │──(success: email) ───────▶ email_node ──▶ synthesis_node
-                                                  └──(error) ──▶ heal_node ──▶ sql_node
-    """
-    workflow = StateGraph(AgentState)
-
-    # 1. Register all specialized nodes
-    workflow.add_node("router_node", router_node)
-    workflow.add_node("sql_node", sql_node)
-    workflow.add_node("heal_node", heal_node)
-    workflow.add_node("stats_node", stats_node)
-    workflow.add_node("email_node", email_node)
-    workflow.add_node("synthesis_node", synthesis_node)
-
-    # 2. Entry point into Router Node
-    workflow.add_edge(START, "router_node")
-
-    # 3. Conditional routing from Router Node
-    workflow.add_conditional_edges(
-        "router_node",
-        route_after_entry,
-        {
-            "sql_node": "sql_node",
-            "synthesis_node": "synthesis_node",
-        },
+def create_agent_graph(llm, executor, catalog, settings):
+    graph = StateGraph(AgentState)
+    for name, node in {
+        "router": partial(router, llm=llm, settings=settings),
+        "sql_generator": partial(sql_generator, llm=llm, catalog=catalog),
+        "sql_executor": partial(sql_executor, executor=executor),
+        "answer": partial(answer, llm=llm),
+    }.items():
+        graph.add_node(name, measured(name, node))
+    graph.add_edge(START, "router")
+    graph.add_conditional_edges("router", after_router, ["sql_generator", "answer"])
+    graph.add_conditional_edges(
+        "sql_generator", after_generator, ["sql_executor", "answer"]
     )
-
-    # 4. Conditional routing after SQL execution
-    workflow.add_conditional_edges(
-        "sql_node",
-        route_after_sql,
-        {
-            "heal_node": "heal_node",
-            "stats_node": "stats_node",
-            "email_node": "email_node",
-            "synthesis_node": "synthesis_node",
-        },
+    graph.add_conditional_edges(
+        "sql_executor",
+        partial(after_executor, max_repairs=settings.MAX_SQL_REPAIRS),
+        ["sql_generator", "answer"],
     )
-
-    # 5. Self-healing loop: heal_node ➔ sql_node
-    workflow.add_edge("heal_node", "sql_node")
-
-    # 6. Feature nodes route to synthesis
-    workflow.add_edge("stats_node", "synthesis_node")
-    workflow.add_edge("email_node", "synthesis_node")
-
-    # 7. Terminal edge
-    workflow.add_edge("synthesis_node", END)
-
-    return workflow
-
-
-# Compiled Singleton Graph Instance
-agent_graph = create_agent_graph().compile()
-
-
-def run_agent_workflow(
-    user_question: str,
-    conversation_id: Optional[str] = None,
-    conversation_summary: Optional[str] = None,
-    chat_history: Optional[List[Dict[str, Any]]] = None,
-) -> AgentState:
-    """
-    Synchronously executes the decoupled LangGraph agent workflow with conversation memory context.
-    Returns populated final AgentState with sub-2s latency.
-    """
-    initial_state: AgentState = {
-        "messages": [],
-        "user_question": user_question,
-        "conversation_id": conversation_id,
-        "conversation_summary": conversation_summary,
-        "chat_history": chat_history or [],
-        "intent": "data_query",
-        "thought_process": "",
-        "direct_response": None,
-        "tables_used": [],
-        "sql_query": None,
-        "query_results": None,
-        "columns": None,
-        "row_count": 0,
-        "execution_time_ms": 0.0,
-        "error_history": [],
-        "retry_count": 0,
-        "computed_metrics": None,
-        "action_type": None,
-        "action_payload": None,
-        "requires_human_approval": False,
-        "is_approved": False,
-        "chart_config": None,
-        "final_response": "",
-        "agent_thought_trace": [],
-    }
-
-    final_state = agent_graph.invoke(initial_state)
-    return final_state
+    graph.add_edge("answer", END)
+    return graph.compile()

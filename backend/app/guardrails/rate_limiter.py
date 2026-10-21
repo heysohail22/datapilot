@@ -69,10 +69,8 @@ rate_limiter = SlidingWindowRateLimiter(default_limit=30, default_window_seconds
 
 def extract_client_ip(request: Request) -> str:
     """Extracts client IP from X-Forwarded-For header or direct client host."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "127.0.0.1"
+    return request.client.host if request.client else "unknown"
+
 
 
 async def verify_rate_limit(request: Request):

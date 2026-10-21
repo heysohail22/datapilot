@@ -130,7 +130,10 @@ export const DataChart: React.FC<DataChartProps> = ({ config, data }) => {
 
   const chartData = data.map((d) => ({
     ...d,
-    [yKey]: typeof d[yKey] === "number" ? d[yKey] : Number(d[yKey]) || 0,
+    // Preserve missing values as gaps; decimal strings become plotting numbers.
+    [yKey]: d[yKey] === null || d[yKey] === undefined || d[yKey] === ""
+      ? null
+      : Number.isFinite(Number(d[yKey])) ? Number(d[yKey]) : null,
   }));
 
   const cleanTitle =

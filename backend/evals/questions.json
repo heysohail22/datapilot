@@ -1,0 +1,8 @@
+[
+  {"id":"chat","question":"Hello","route":"general_chat"},
+  {"id":"clarify","question":"Show profit","route":"needs_clarification"},
+  {"id":"revenue","question":"Revenue in January 2025","route":"business_query","metric_id":"revenue","period_start":"2025-01-01","period_end_exclusive":"2025-02-01","expected":{"revenue":"110000"}},
+  {"id":"margin","question":"Gross profit margin in January 2025","route":"business_query","metric_id":"gross_margin","period_start":"2025-01-01","period_end_exclusive":"2025-02-01","expected":{"revenue":"110000","cogs":"69000","margin":"37.2727272727"}},
+  {"id":"growth","question":"Compare revenue for February 2025 with January 2025","route":"business_query","metric_id":"revenue_growth","expected":{"current":"132000","prior":"110000","growth":"20"}},
+  {"id":"semantic_risk","question":"Profit margin in January 2025","route":"needs_clarification","note":"Executable revenue SQL is not sufficient. The profit definition must be clarified."}
+]

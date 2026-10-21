@@ -1,3 +1,5 @@
+> Superseded by [05 Backend Rebuild Implementation](05_backend_rebuild_implementation.md). Retained as historical design context.
+
 # 📋 Spec 02: LangGraph State Machine & Specialized Nodes
 
 > **Module 02 of DataPilot Architecture**  

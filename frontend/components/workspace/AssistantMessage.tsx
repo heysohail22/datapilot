@@ -45,8 +45,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const hasData = Array.isArray(data) && data.length > 0;
   const hasChart = Boolean(chartConfig && chartConfig.type && hasData && data!.length >= 2);
 
-  const [isChartOpen, setIsChartOpen] = useState<boolean>(hasChart);
-  const [isTableOpen, setIsTableOpen] = useState<boolean>(!hasChart && hasData);
+  const [chartOpenOverride, setIsChartOpen] = useState<boolean | null>(null);
+  const isChartOpen = chartOpenOverride ?? hasChart;
+  const [tableOpenOverride, setIsTableOpen] = useState<boolean | null>(null);
+  const isTableOpen = tableOpenOverride ?? (!hasChart && hasData);
   const [isSqlOpen, setIsSqlOpen] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
 

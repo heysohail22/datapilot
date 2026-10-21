@@ -75,11 +75,11 @@ export default function Home() {
 
   const backendUrl = getBackendUrl();
 
-  // Initial load: Fetch persistent conversations from backend Supabase
+  // Load conversation history for this browser session
   useEffect(() => {
     async function loadConversations() {
       try {
-        const res = await fetch(`${backendUrl}/api/conversations`);
+        const res = await fetch(`${backendUrl}/api/conversations`, { credentials: "include" });
         if (!res.ok) return;
         const data = await res.json();
         if (data.conversations && data.conversations.length > 0) {
@@ -93,7 +93,7 @@ export default function Home() {
           setActiveConversationId(loaded[0].id);
 
           // Hydrate the first conversation's messages
-          const firstDetailRes = await fetch(`${backendUrl}/api/conversations/${loaded[0].id}`);
+          const firstDetailRes = await fetch(`${backendUrl}/api/conversations/${loaded[0].id}`, { credentials: "include" });
           if (firstDetailRes.ok) {
             const firstDetail = await firstDetailRes.json();
             if (firstDetail.messages) {
@@ -152,7 +152,7 @@ export default function Home() {
     const target = conversations.find((c) => c.id === id);
     if (target && target.messages.length === 0) {
       try {
-        const res = await fetch(`${backendUrl}/api/conversations/${id}`);
+        const res = await fetch(`${backendUrl}/api/conversations/${id}`, { credentials: "include" });
         if (res.ok) {
           const detail = await res.json();
           if (detail.messages) {
@@ -186,7 +186,7 @@ export default function Home() {
 
   const handleDeleteConversation = async (id: string) => {
     try {
-      await fetch(`${backendUrl}/api/conversations/${id}`, { method: "DELETE" });
+      await fetch(`${backendUrl}/api/conversations/${id}`, { method: "DELETE", credentials: "include" });
     } catch (err) {
       console.warn("Could not delete conversation on backend:", err);
     }
@@ -253,12 +253,13 @@ export default function Home() {
     try {
       const response = await fetch(`${backendUrl}/api/chat/stream`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           message: text,
-          conversation_id: activeConversationId,
+          conversation_id: activeConversationId.startsWith("conv-") ? null : activeConversationId,
         }),
       });
 
@@ -347,11 +348,14 @@ export default function Home() {
                   )
                 );
               } else if (currentEvent === "done" || parsed.response !== undefined) {
+                const canonicalId: string = parsed.conversation_id || activeConversationId;
+                setActiveConversationId((current) => current === activeConversationId ? canonicalId : current);
                 setConversations((prev) =>
                   prev.map((c) =>
                     c.id === activeConversationId
                       ? {
                           ...c,
+                          id: canonicalId,
                           messages: c.messages.map((m) =>
                             m.id === assistantMsgId
                               ? {

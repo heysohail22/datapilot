@@ -1,173 +1,131 @@
-# 🚀 DataPilot
+# DataPilot
 
-DataPilot is a modern full-stack AI application powered by **Next.js 16**, **FastAPI**, **LangChain**, and **Google Gemini AI**. It provides an intelligent AI assistant paired with a high-performance backend and a modern React 19 / TypeScript frontend.
-
----
-
-## 🛠 Tech Stack
-
-### **Backend**
-- **Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.12+)
-- **LLM Integration:** [LangChain](https://www.langchain.com/) (`langchain-google-genai`)
-- **AI Model:** Google Gemini (`gemini-2.5-flash`)
-- **Database:** Supabase PostgreSQL (SQLAlchemy / psycopg2)
-- **Configuration & Validation:** [Pydantic v2](https://docs.pydantic.dev/) & `pydantic-settings`
-- **Package Manager:** `uv`
-
-### **Frontend**
-- **Framework:** [Next.js 16](https://nextjs.org/) (App Router)
-- **UI & Styling:** React 19, Tailwind CSS v4
-- **Iconography & Animation:** `lucide-react`, `framer-motion`
-- **Markdown & Code Highlighting:** `react-markdown`, `remark-gfm`, `rehype-highlight`
-- **Language:** TypeScript
-- **Package Manager:** `pnpm`
-
----
-
-## 🎨 Frontend UI Features & Design Roadmap
-
-- **Glassmorphic Dark Theme:** Sleek dark-mode aesthetic with zinc/slate panels and glowing accent highlights.
-- **Collapsible Sidebar:** Access chat history, data sources, database connectivity status, and settings.
-- **AI Chat Arena:** Real-time chat feed with Markdown rendering, table support, and code syntax highlighting with copy buttons.
-- **Floating Prompt Bar:** Auto-expanding prompt input with quick action chips ("Query Supabase", "Analyze Data", "Write SQL").
-
----
-
-## 📁 Project Structure
+DataPilot answers business questions using a four-node LangGraph workflow, a FastAPI backend, and a Next.js analytics workspace.
 
 ```text
-datapilot/
-├── backend/                  # FastAPI Python backend
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── endpoints.py  # API routes (/health, /api/chat)
-│   │   ├── config.py         # Pydantic Settings & environment manager
-│   │   ├── llm_service.py    # LangChain & Gemini AI service logic
-│   │   └── schemas.py        # Pydantic request/response models
-│   ├── .env                  # Environment variables & API keys (Git-ignored)
-│   ├── main.py               # FastAPI entry point & CORS configuration
-│   └── pyproject.toml        # Backend dependencies & configuration
-│
-├── frontend/                 # Next.js TypeScript frontend
-│   ├── app/                  # Next.js App Router pages & components
-│   │   ├── favicon.ico
-│   │   ├── globals.css       # Global styles & Tailwind CSS setup
-│   │   ├── layout.tsx        # Root HTML layout
-│   │   └── page.tsx          # Main application page
-│   ├── public/               # Static assets & icons
-│   ├── package.json          # Frontend scripts & dependencies
-│   └── tsconfig.json         # TypeScript configuration
-│
-├── .gitignore                # Root Git ignore rules
-└── README.md                 # Project documentation
+Question → Router → SQL Generator → SQL Executor → Answer
+              └──────────────────────────────────→ Answer
+                         ↑                │
+                         └─ fixable error ┘
+                           at most 2 repairs
 ```
 
----
+The router classifies chat, clarification, supported business questions, and unsupported requests. Python resolves calendar dates. PostgreSQL calculates metrics over the complete eligible dataset. The answer node explains the returned values and selects an optional chart. Every execution, including a repair, passes the same AST-based SQL safety policy.
 
-## ⚡ Quick Start
+Implementation specification: [.agents/specs/05_backend_rebuild_implementation.md](.agents/specs/05_backend_rebuild_implementation.md).
 
-### 1. Prerequisites
-- **Node.js** (v20+ recommended) & **pnpm**
-- **Python** (v3.12+) & **uv** package manager
+## Backend structure
 
----
+```text
+backend/app/
+├── main.py                 # Application factory, lifespan, signed session cookies, CORS
+├── config.py               # Validated settings; no environment mutation
+├── api/                    # HTTP contracts, chat/SSE/history and health endpoints
+├── agent/
+│   ├── contracts.py        # RouterDecision, BusinessPlan, SQLDraft, ExecutionResult
+│   ├── state.py            # Per-turn graph state
+│   ├── graph.py            # Exactly four nodes, compiled with injected dependencies
+│   ├── routing.py          # Pure edge functions; no LLM calls
+│   ├── nodes/              # router, sql_generator, sql_executor, answer
+│   └── prompts/            # Model instructions, separate from runtime logic
+├── business/               # Versioned metric meanings and deterministic periods
+├── database/               # Pool lifecycle, metadata allowlist and read-only executor
+├── services/               # Provider adapter, bounded history and chat orchestration
+└── guardrails/             # Input checks, SQL AST policy, output redaction, rate limit
+```
 
-### 2. Backend Setup
+## Local setup
 
-1. **Navigate to the backend directory:**
-   ```bash
-   cd backend
-   ```
-
-2. **Create the `.env` file:**
-   Create a `.env` file inside `backend/` with the following variables:
-   ```env
-   DATABASE_URL=postgresql://user:password@host:5432/postgres
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
-
-3. **Install dependencies & run the server:**
-   ```bash
-   uv sync
-   uv run python main.py
-   ```
-   *The backend server will run at `http://localhost:8000`.*  
-   *API documentation will be available at `http://localhost:8000/docs`.*
-
----
-
-### 3. Frontend Setup
-
-1. **Navigate to the frontend directory:**
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   pnpm install
-   ```
-
-3. **Start the development server:**
-   ```bash
-   pnpm dev
-   ```
-   *The web application will be accessible at `http://localhost:3000`.*
-
----
-
-### 4. Docker Compose (Full-Stack Setup)
-
-To run both backend and frontend in isolated containers locally:
+Use Python 3.12+, uv, Node 22+, and pnpm. Run from the repository root:
 
 ```bash
-# 1. Copy environment template
-cp .env.example .env
-
-# 2. Fill in your Supabase, Groq, and Gemini keys in .env
-
-# 3. Build and launch containers
-docker compose up --build
+cp backend/.env.example backend/.env
+cd backend
+uv sync
+uv run python main.py
 ```
 
-- **Frontend:** `http://localhost:3000`
-- **Backend API:** `http://localhost:8000`
-- **API Documentation:** `http://localhost:8000/docs`
-- **Backend Health Check:** `http://localhost:8000/health`
+Configure a provider key (`LLM_API_KEY`, or the selected provider's existing `GROQ_API_KEY`/`GEMINI_API_KEY`) and a database connection. The default provider is Groq; for Google set `LLM_PROVIDER=google` and all three model identifiers to your supported Google model. Model clients are constructed once at startup. Required credentials fail clearly at startup; a database outage leaves liveness available and readiness unavailable.
 
----
+Before enabling business queries, set `BUSINESS_TABLES`, `ENABLED_METRICS`, and `METRIC_SCHEMA_NOTES` for the actual database. Metrics start disabled. Mapping notes must describe real date/amount/identifier columns, row grain, relationships, status exclusions, discounts, refunds, tax treatment, historical cost availability, and history coverage. The fixture example in `.env.example` is not a presumed production schema. Gross margin requires historical COGS; net profit additionally requires expense data. Metadata discovery samples no customer rows.
 
-## ☁️ CI/CD & AWS Deployment
+Use a dedicated database role granted SELECT only on the allowed business tables. Do not use a database administrator account for deployment. The backend never creates or migrates business or conversation tables. All generated queries execute in read-only transactions with a local timeout and restricted search path. Unknown functions, mutations, multiple statements, locks and internal tables are blocked.
 
-### GitHub Actions CI/CD
-- **Continuous Integration ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):** Automatically runs on all PRs and feature branches:
-  - Backend: `uv sync --frozen` and `uv run pytest` (14/14 guardrail & DB tests).
-  - Frontend: `pnpm lint` and Next.js standalone `pnpm build`.
-  - Docker: Validates multi-stage Docker builds.
-- **Continuous Deployment ([`.github/workflows/cd.yml`](.github/workflows/cd.yml)):** Automatically triggers on merge to `main`:
-  - Builds production Docker images.
-  - Pushes images to **Amazon ECR** tagged with commit SHA and `latest`.
-  - Deploys zero-downtime rolling updates to **Amazon ECS Fargate**.
+Start the frontend in another terminal:
 
-*See the [AWS Deployment Guide](deploy/aws/README.md) for full IAM and ECS setup instructions.*
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
 
----
+Backend: `http://localhost:8000`; frontend: `http://localhost:3000`; OpenAPI: `http://localhost:8000/docs`. `docker compose up --build` retains the same backend entry point. Set the frontend API URL to the intended backend before deploying.
 
-## 📡 API Endpoints
+## Configuration
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Service health check endpoint |
-| `GET` | `/api/database/health` | Supabase database connection and schema metadata |
-| `POST` | `/api/chat` | Synchronous analytical query execution |
-| `POST` | `/api/chat/stream` | Real-time SSE streaming endpoint (step badges, tokens, charts) |
+The complete template is [backend/.env.example](backend/.env.example). Secrets are never committed.
 
----
+| Setting | Default or behavior |
+| --- | --- |
+| DATABASE_URL | PostgreSQL connection for a dedicated read-only role |
+| LLM_PROVIDER | groq; google also supported |
+| LLM_API_KEY | Selected provider key; existing provider-specific keys are fallback inputs |
+| ROUTER_MODEL / SQL_MODEL / ANSWER_MODEL | openai/gpt-oss-120b through Groq; override for another provider |
+| BUSINESS_TABLES | Explicit public business table allowlist |
+| ENABLED_METRICS | Empty until actual schema mapping is configured |
+| METRIC_SCHEMA_NOTES | Required when metrics are enabled |
+| BUSINESS_TIMEZONE / BUSINESS_CURRENCY | Asia/Kolkata / INR |
+| FRONTEND_URL / CORS_ORIGINS | Exact allowed origins; no wildcard deployment domains |
+| SESSION_SECRET | Stable random signing secret; empty creates a per-process value |
+| SESSION_SECURE | false locally; true for HTTPS and cross-site browser cookies |
+| SQL_TIMEOUT_MS | 5000 |
+| MAX_SQL_REPAIRS | 2 maximum, plus the initial attempt |
+| QUERY_DEFAULT_ROWS / QUERY_MAX_ROWS | 50 / 100 displayed result rows |
+| SCHEMA_CACHE_TTL_SECONDS | 3600 |
+| MODEL_TIMEOUT_SECONDS / REQUEST_TIMEOUT_SECONDS | 20 / 90 |
+| CONVERSATION_LIMIT | 200 in-memory conversations |
 
-## 🔐 Environment & Security
+Calendar comparisons include completed days only for current periods and label the exclusion of today. Previous completed months compare against complete previous months. Missing values stay unknown; zero denominators return null. Decimal amounts serialize as exact strings in tables and convert to numbers only for chart plotting.
 
-- **Secrets Protection:** Never commit `.env` or `.env.local` files to source control.
-- **Dual-Layer Guardrails:** Tier-1 deterministic input regex sanitizer (`<0.5ms`) and Tier-2 SQL injection & schema access validator.
+## API and compatibility
 
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET | /health | Process liveness |
+| GET | /api/database/health | Lightweight database readiness; safe error on failure |
+| POST | /api/chat | Full typed answer, clarification, or handled error |
+| POST | /api/chat/stream | SSE step events and final done payload; no hidden reasoning |
+| GET | /api/conversations | Current browser session's bounded history |
+| GET | /api/conversations/{id} | Session-owned conversation or 404 |
+| DELETE | /api/conversations/{id} | Delete session-owned inactive conversation |
+
+A new chat sends `conversation_id: null`; the server returns the canonical ID. Follow-ups send that ID. Fetch requests must use `credentials: "include"`. Response fields include `status`, `message`, `context`, `data`, `chart`, `warnings`, and `request_id`. Legacy `response`, `columns`, `sql`, `chart_config` and timing fields preserve the current workspace contract. `thought_trace` contains public step labels only. The streaming adapter emits real node completion steps and one final answer, rather than token-by-token model reasoning.
+
+History is bounded and in memory, isolated with an HttpOnly signed session cookie, and serialized per conversation. Restart or eviction clears it. This is a single-process implementation; durable storage and authenticated business authorization are prerequisites for a multi-worker or multi-user production deployment. Cookies identify browser history, not authorization to independent businesses. Cross-site browser policies may block third-party cookies; use a same-site API deployment when required.
+
+## Verification
+
+```bash
+cd backend
+uv run pytest
+```
+
+Fast tests inject fake models and execution boundaries. Real PostgreSQL tests run only with `TEST_DATABASE_URL` pointing at a disposable database whose name ends in `_test`:
+
+```bash
+TEST_DATABASE_URL=postgresql://test_user:test_password@localhost:5432/datapilot_test uv run pytest
+```
+
+These tests create and remove fixture tables in that database. Never point them at business data. They check actual margin, growth, annual aggregation, full aggregation before display limits, metadata allowlists, and read-only execution. The CI workflow supplies a disposable PostgreSQL service.
+
+```bash
+cd frontend
+pnpm lint
+pnpm build
+```
+
+Live-model evaluation is intentionally separate and may incur provider costs. Load `backend/tests/fixtures/business_data.sql` into an isolated `_test` database, configure its metric mappings, then run `uv run python -m evals.run --live` with `TEST_DATABASE_URL`. Historical datasets/reports under `backend/evals` describe the superseded architecture and are retained as reference; they are not current verification results.
+
+## Current limits
+
+There is no semantic Query Validator: executable SQL can still answer the wrong question. Use metric definitions and known-answer evaluations to measure this risk. Email actions and separate Python statistics nodes are excluded from this rebuild. No schema changes or new business data are applied automatically.

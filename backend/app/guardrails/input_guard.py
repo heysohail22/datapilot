@@ -1,291 +1,42 @@
+"""Fast deterministic input checks; do not block ordinary business vocabulary."""
+
 import re
-import time
-from typing import List, Optional
-from pydantic import BaseModel, Field
+import unicodedata
+from pydantic import BaseModel
 
 
 class GuardrailOutcome(BaseModel):
-    """
-    Result contract for pre-flight input guardrail validation.
-    """
-    is_safe: bool = Field(..., description="True if input passed all checks without violations.")
-    sanitized_text: str = Field(..., description="Cleaned, normalized input string.")
-    rejection_reason: Optional[str] = Field(None, description="Polite, executive-grade explanation if rejected.")
-    violation_type: Optional[str] = Field(None, description="Category of rule triggered (if any).")
-    matched_patterns: List[str] = Field(default_factory=list, description="Identifiers of triggered rules.")
-    latency_ms: float = Field(0.0, description="Latency spent executing pre-flight guardrail in ms.")
+    is_safe: bool
+    sanitized_text: str
+    rejection_reason: str | None = None
 
 
-import base64
-
-# ---------------------------------------------------------------------------
-# Pre-compiled Zero-False-Positive Regex Patterns
-# ---------------------------------------------------------------------------
-
-# 1. Explicit SQL injection syntax (structural syntax delimiters, not normal English words)
-SQL_INJECTION_PATTERNS = [
-    (
-        "SQL_MUTATION_CHAINING",
-        re.compile(
-            r";\s*(DROP|DELETE\s+FROM|TRUNCATE|ALTER\s+TABLE|UPDATE\s+\w+\s+SET|INSERT\s+INTO|GRANT|REVOKE)\b",
-            re.IGNORECASE,
-        ),
-        "For data integrity and security, database modification commands (DROP, DELETE, TRUNCATE, ALTER, INSERT, UPDATE) are not permitted. DataPilot operates strictly with read-only analytical access.",
-    ),
-    (
-        "SQL_COMMENT_INJECTION",
-        re.compile(r"(--\s*$|/\*.*?\*/)", re.MULTILINE | re.DOTALL),
-        "Inquiry contains SQL comment syntax delimiters (`--` or `/* */`). Please submit your question in standard natural language.",
-    ),
-    (
-        "SQL_UNION_SCHEMA_PROBE",
-        re.compile(
-            r"\bUNION\s+(ALL\s+)?SELECT\b.*?\bFROM\s+(pg_shadow|pg_authid|pg_user|information_schema|pg_tables|pg_catalog)\b",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        "Direct queries probing internal database catalog tables and security metadata are restricted.",
-    ),
+RULES = [
+    r"<\s*/?\s*(?:system|developer|instruction|admin_override)\s*>",
+    r"\b(?:ignore|bypass|override|disregard)\b.{0,100}\b(?:instructions|guardrails|system prompt)\b",
+    r"\b(?:act as|you are now|pretend to be)\b.{0,80}\b(?:DAN|root|unrestricted|bash|jailbreak)\b",
+    r"(?:\.env\b|\b(?:DATABASE_URL|GEMINI_API_KEY|GROQ_API_KEY|LLM_API_KEY|AWS_SECRET_ACCESS_KEY|service_role)\b)",
+    r";\s*(?:DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE)\b",
+    r"\b(?:reveal|print|show|dump)\b.{0,80}\b(?:system prompt|password|credentials|api keys?|secrets)\b",
+    r"\b(?:sudo|rm\s+-rf|/bin/bash|/bin/sh)\b",
+    r"\b(?:decode|base64)\b.{0,80}\b(?:execute|run)\b",
 ]
+PATTERN = re.compile("|".join(RULES), re.IGNORECASE | re.DOTALL)
 
-# 2. Explicit prompt injection and system override signatures
-PROMPT_INJECTION_PATTERNS = [
-    (
-        "SYSTEM_TAG_INJECTION",
-        re.compile(
-            r"(<\s*/?\s*(system|instruction|developer|inst|context|system_prompt|admin_override)\s*>|```\s*(system|instruction|developer|admin))",
-            re.IGNORECASE,
-        ),
-        "System prompt boundary tags (`<system>`, `[INST]`, ````system`) are not allowed in queries. Please rephrase your question in natural language.",
-    ),
-    (
-        "PROMPT_OVERRIDE_DIRECTIVE",
-        re.compile(
-            r"(?i)\b(ignore|disregard|forget|bypass|override)\b.*?\b(all|previous|prior|system|above|everything|context)\b.*?\b(instructions|rules|prompts|directives|guardrails|know|context)\b"
-        ),
-        "DataPilot AI operates strictly within enterprise data analytics boundaries and cannot override core system instructions.",
-    ),
-    (
-        "ROLE_HIJACK_JAILBREAK",
-        re.compile(
-            r"(?i)\b(you are now|act as|pretend to be|roleplay as|simulate)\b.*?\b(dan|jailbreak|unrestricted|developer mode|god mode|root|terminal\s+shell|bash|command\s+line)\b|\b(developer mode enabled|jailbreak mode)\b"
-        ),
-        "Role-switching or unconstrained mode requests are not permitted. DataPilot operates exclusively as a Business Intelligence analyst.",
-    ),
-    (
-        "SYSTEM_PROMPT_EXTRACTION",
-        re.compile(
-            r"(?i)\b(repeat|print|show|reveal|display|output|dump)\b.*?\b(your\s+(entire\s+|full\s+)?(initial\s+)?system\s+prompt|initial\s+instructions|system\s+directive|developer\s+prompt|verbatim)\b"
-        ),
-        "Internal operational directives and prompt architecture cannot be disclosed.",
-    ),
-    (
-        "TRANSLATION_EXECUTION_WRAPPER",
-        re.compile(
-            r"(?i)\b(translate|convert|transform)\b.*?\b(and\s+execute|and\s+run)\b.*?(drop|delete|insert|update|truncate|alter|grant|revoke|shutdown|rm\s+-rf)"
-        ),
-        "Wrapped translation/execution directives containing system commands or SQL mutations are prohibited.",
-    ),
-    (
-        "TERMINAL_COMMAND_INJECTION",
-        re.compile(
-            r"(?i)\b(rm\s+-rf|sudo\s+|chmod\s+|cat\s+/etc/|/bin/sh|/bin/bash)\b"
-        ),
-        "Operating system and shell command executions are strictly prohibited.",
-    ),
-    (
-        "MULTI_TURN_ROLEPLAY_INJECTION",
-        re.compile(
-            r"(?i)\bHuman:\s*.*?\bAssistant:\s*.*?\bHuman:\s*",
-            re.DOTALL,
-        ),
-        "Multi-turn conversation transcript hijacking is not permitted.",
-    ),
-    (
-        "BASE64_DECODE_EXECUTION",
-        re.compile(
-            r"(?i)\b(base64\s+decode\s+and\s+execute|decode\s+base64\s+and\s+run)\b"
-        ),
-        "Base64 encoded execution directives are prohibited.",
-    ),
-]
-
-# 3. Environment & Secret Extraction Probes
-SECRET_PROBE_PATTERNS = [
-    (
-        "ENV_FILE_ACCESS_PROBE",
-        re.compile(r"(?i)(/\.env|\.env\b)"),
-        "Direct access to .env configuration files is strictly prohibited.",
-    ),
-    (
-        "CREDENTIAL_EXTRACTION_PROBE",
-        re.compile(
-            r"(?i)\b(show|print|reveal|dump|extract|read|get|what\s+is|what\s+are|output)\b.*?(database_url|postgres_password|database\s+password|gemini_api_key|groq_api_key|aws_secret|aws_secret_access_key|jwt\s+secret|secret_key|api_token|\.env|server\s+secrets|process\.env|os\.environ|service_role|master\s+secret|encryption\s+key|backend\s+config|password\s+hashes?)"
-        ),
-        "Access to environment variables, system credentials, private API keys, and database passwords is strictly prohibited.",
-    ),
-    (
-        "DIRECT_SECRET_NAME_PROBE",
-        re.compile(
-            r"(?i)\b(AWS_SECRET_ACCESS_KEY|GROQ_API_KEY|GEMINI_API_KEY|DATABASE_URL|POSTGRES_PASSWORD|service_role\s+key|backend\s+config\s+token)\b"
-        ),
-        "Queries referencing internal secret variable identifiers are blocked for security.",
-    ),
-]
-
-
-def check_base64_payload(text: str) -> bool:
-    """
-    Detects, decodes, and inspects base64 encoded substrings for embedded SQL or system exploits.
-    """
-    b64_candidates = re.findall(
-        r"(?:['\"]([A-Za-z0-9+/=]{8,})['\"]|base64\s*(?:decode)?.*?([A-Za-z0-9+/=]{8,}))",
-        text,
-        re.IGNORECASE,
-    )
-    for groups in b64_candidates:
-        token = groups[0] or groups[1]
-        if token:
-            try:
-                decoded = base64.b64decode(token).decode("utf-8", errors="ignore").upper()
-                if any(kw in decoded for kw in ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE", "ALTER", "SELECT", "GRANT"]):
-                    return True
-            except Exception:
-                pass
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Sanitization and Normalization
-# ---------------------------------------------------------------------------
 
 def sanitize_user_input(text: str) -> str:
-    """
-    Normalizes input text by:
-    1. Removing null bytes and non-printable control characters.
-    2. Normalizing multiple whitespace / tab characters to single spaces.
-    3. Stripping leading and trailing whitespace.
-    """
-    if not text:
-        return ""
+    return "".join(
+        c for c in unicodedata.normalize("NFKC", text) if c.isprintable() or c in "\n\t"
+    ).strip()
 
-    # Remove null bytes and ASCII control characters (keep standard \n, \r, \t)
-    cleaned = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", text)
-
-    # Normalize excessive newlines / whitespace
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-
-    return cleaned.strip()
-
-
-# ---------------------------------------------------------------------------
-# Pre-Flight Guardrail Validator (Layer 1 - <0.5ms)
-# ---------------------------------------------------------------------------
 
 def sanitize_and_validate_input(text: str) -> GuardrailOutcome:
-    """
-    Executes high-speed Tier-1 deterministic input guardrails.
-    - Sub-millisecond latency.
-    - Zero false positives on legitimate analytical queries (e.g. 'customers who dropped orders').
-    - Intercepts malformed inputs, explicit SQL injection syntax, and prompt injections.
-    """
-    start_time = time.perf_counter()
-
-    if not isinstance(text, str):
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-        return GuardrailOutcome(
-            is_safe=False,
-            sanitized_text="",
-            rejection_reason="Invalid inquiry format. Please provide a text-based analytical question.",
-            violation_type="INVALID_TYPE",
-            matched_patterns=["NON_STRING_INPUT"],
-            latency_ms=elapsed_ms,
-        )
-
-    # 1. Sanitize
-    cleaned = sanitize_user_input(text)
-
-    # 2. Length & Empty Boundaries
-    if len(cleaned) == 0:
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-        return GuardrailOutcome(
-            is_safe=False,
-            sanitized_text="",
-            rejection_reason="Inquiry cannot be empty. Please ask a business question regarding sales, customers, or analytics.",
-            violation_type="EMPTY_INPUT",
-            matched_patterns=["EMPTY_STRING"],
-            latency_ms=elapsed_ms,
-        )
-
-    if len(cleaned) > 600:
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-        return GuardrailOutcome(
-            is_safe=False,
-            sanitized_text=cleaned[:200] + "...",
-            rejection_reason="The inquiry exceeds the maximum allowed length of 600 characters. Please provide a more concise question.",
-            violation_type="OVERSIZED_INPUT",
-            matched_patterns=["EXCEEDS_MAX_LENGTH"],
-            latency_ms=elapsed_ms,
-        )
-
-    # 3. Check Explicit SQL Injection Patterns
-    for rule_id, pattern, reason in SQL_INJECTION_PATTERNS:
-        if pattern.search(cleaned):
-            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-            return GuardrailOutcome(
-                is_safe=False,
-                sanitized_text=cleaned,
-                rejection_reason=reason,
-                violation_type=rule_id,
-                matched_patterns=[rule_id],
-                latency_ms=elapsed_ms,
-            )
-
-    # 4. Check Prompt Injection & System Override Patterns
-    for rule_id, pattern, reason in PROMPT_INJECTION_PATTERNS:
-        if pattern.search(cleaned):
-            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-            return GuardrailOutcome(
-                is_safe=False,
-                sanitized_text=cleaned,
-                rejection_reason=reason,
-                violation_type=rule_id,
-                matched_patterns=[rule_id],
-                latency_ms=elapsed_ms,
-            )
-
-    # 5. Check Secret / Credential Probes
-    for rule_id, pattern, reason in SECRET_PROBE_PATTERNS:
-        if pattern.search(cleaned):
-            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-            return GuardrailOutcome(
-                is_safe=False,
-                sanitized_text=cleaned,
-                rejection_reason=reason,
-                violation_type=rule_id,
-                matched_patterns=[rule_id],
-                latency_ms=elapsed_ms,
-            )
-
-    # 6. Check Embedded Base64 Obfuscated Payloads
-    if check_base64_payload(cleaned):
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
-        return GuardrailOutcome(
-            is_safe=False,
-            sanitized_text=cleaned,
-            rejection_reason="Inquiry contains obfuscated base64 payload with restricted database/system commands.",
-            violation_type="BASE64_OBFUSCATED_PAYLOAD",
-            matched_patterns=["BASE64_EXPLOIT_DETECTED"],
-            latency_ms=elapsed_ms,
-        )
-
-    # Clean input passed all pre-flight checks
-    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
+    cleaned = sanitize_user_input(text) if isinstance(text, str) else ""
+    safe = bool(cleaned) and len(cleaned) <= 4000 and PATTERN.search(cleaned) is None
     return GuardrailOutcome(
-        is_safe=True,
+        is_safe=safe,
         sanitized_text=cleaned,
-        rejection_reason=None,
-        violation_type=None,
-        matched_patterns=[],
-        latency_ms=elapsed_ms,
+        rejection_reason=None
+        if safe
+        else "Please ask a business question without system commands or requests for secrets.",
     )

@@ -1,235 +1,51 @@
-# 🤖 AGENTS.md — Agent Guidelines & Repository Instructions
+# DataPilot agent guidelines
 
-Welcome to **DataPilot**. This document defines the operating rules, coding standards, environment guidelines, and architectural principles for AI agents working in this repository.
+DataPilot is a FastAPI and LangGraph read-only business analytics backend with a Next.js App Router frontend. The active backend architecture is specified in `.agents/specs/05_backend_rebuild_implementation.md`; specs 02 through 04 describe the superseded implementation.
 
----
+## Package managers
 
-## 🧭 Project Overview
+- Backend: uv only. Use `uv sync`, `uv add`, and `uv run pytest`; never raw pip.
+- Frontend: pnpm only. Use `pnpm install`, `pnpm lint`, `pnpm build`, and `pnpm dev`.
+- Backend entry point: `uv run python main.py` from `backend/`; `main:app` stays compatible with Docker.
 
-**DataPilot** is an enterprise-grade, full-stack AI business intelligence and analytics platform featuring:
-- **Backend:** FastAPI (Python 3.12+), LangGraph cyclic state machine (`langgraph`), LangChain (`langchain-google-genai`, `langchain-groq`), Google Gemini 2.5 Flash, Supabase PostgreSQL (SQLAlchemy & psycopg2), Pydantic v2, and dual-layer security guardrails.
-- **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Recharts data visualization, Lucide React icons, and Radix UI primitives.
+## Backend architecture
 
----
+The graph has exactly four nodes: `router`, `sql_generator`, `sql_executor`, and `answer`. SQL repair returns to `sql_generator` with the failed SQL, sanitized error, original plan and schema. Permit one initial execution plus at most two repairs. Conditional edge functions are deterministic Python and contain no model calls. Do not add a semantic Query Validator until separately requested.
 
-## 📁 Repository Structure & Directory Map
+- `app/main.py`: application factory, lifespan, signed browser session and CORS.
+- `app/api/`: public request/response schemas and routes. No direct model calls.
+- `app/agent/contracts.py`: validated structured outputs and execution contracts.
+- `app/agent/state.py`: fresh per-turn TypedDict state. Additive event reducers receive only new events.
+- `app/agent/graph.py` and `routing.py`: dependency-injected graph and pure routing.
+- `app/agent/nodes/`: small asynchronous workflow steps; no provider-specific logic.
+- `app/agent/prompts/`: model instructions.
+- `app/services/`: bounded provider calls, conversation context and chat orchestration.
+- `app/database/`: pool lifecycle, allowlisted metadata and read-only execution.
+- `app/business/`: metric meanings and deterministic calendar boundaries.
+- `app/guardrails/`: input checks, SQL AST policy, redaction and rate limits.
 
-```text
-datapilot/
-├── .agents/                      # Agent customizations, skills, and workflows
-├── backend/                      # Python FastAPI & LangGraph backend
-│   ├── app/
-│   │   ├── agents/               # LangGraph state machine & specialized nodes
-│   │   │   ├── nodes/            # Specialized graph execution nodes
-│   │   │   │   ├── __init__.py   # Node exports
-│   │   │   │   ├── router_node.py    # Intent classifier (data_query, stats, email, chat)
-│   │   │   │   ├── sql_node.py       # Text-to-SQL generation & execution
-│   │   │   │   ├── heal_node.py      # Self-healing SQL debugger (up to 2 retries)
-│   │   │   │   ├── stats_node.py     # Sandboxed business metrics engine
-│   │   │   │   ├── email_node.py     # Action engine / campaign drafter (HITL)
-│   │   │   │   └── synthesis_node.py # Executive summary & chart config synthesis
-│   │   │   ├── __init__.py       # Workflow runner & graph compiler
-│   │   │   ├── graph.py          # StateGraph definition & conditional edges
-│   │   │   └── state.py          # AgentState TypedDict contract
-│   │   ├── api/
-│   │   │   ├── __init__.py
-│   │   │   └── endpoints.py      # REST & SSE streaming endpoints (/api/chat, /api/chat/stream)
-│   │   ├── guardrails/           # Dual-layer deterministic security guardrails
-│   │   │   ├── __init__.py       # Guardrail exports
-│   │   │   ├── input_guard.py    # Layer 1: Pre-flight input sanitizer & injection defense (<0.5ms)
-│   │   │   └── sql_guard.py      # Layer 2: Post-gen SQL validator & LIMIT enforcer
-│   │   ├── tools/                # Specialized agent tool suite
-│   │   │   ├── __init__.py       # Tool exports
-│   │   │   ├── db_tool.py        # Read-only query execution & type sanitizer
-│   │   │   ├── schema_tool.py    # Schema introspection & column sampling
-│   │   │   ├── python_tool.py    # Sandboxed stats calculations (profit margin, churn, MoM)
-│   │   │   └── email_tool.py     # Structured campaign & business action drafter
-│   │   ├── cache.py              # In-memory TTL cache for schemas and query responses
-│   │   ├── config.py             # Pydantic Settings & environment variables
-│   │   ├── database.py           # Supabase connection pooling & schema metadata
-│   │   ├── llm_service.py        # Service orchestrator & SSE streaming generator
-│   │   └── schemas.py            # Pydantic request/response schemas & ChartConfig
-│   ├── tests/                    # Automated backend test suites
-│   │   ├── test_input_guard.py   # Layer 1 input guardrail tests
-│   │   └── test_sql_guard.py     # Layer 2 SQL guardrail tests
-│   ├── .env                      # Backend environment secrets (DO NOT COMMIT)
-│   ├── main.py                   # FastAPI server entry point, CORS & lifespan pool warm-up
-│   ├── pyproject.toml            # Backend dependencies & metadata
-│   └── uv.lock                   # uv lockfile
-│
-├── frontend/                     # Next.js TypeScript frontend
-│   ├── app/                      # Next.js App Router
-│   │   ├── globals.css           # Tailwind CSS v4 setup & theme design tokens
-│   │   ├── icon.svg              # DataPilot Pilot Delta favicon
-│   │   ├── layout.tsx            # Root HTML layout & fonts
-│   │   └── page.tsx              # Main analytics chat & state orchestrator
-│   ├── components/               # Modular UI component tree
-│   │   ├── brand/
-│   │   │   └── DataPilotLogo.tsx # Stealth flight delta SVG brand mark & wordmark
-│   │   ├── common/
-│   │   │   └── UserAvatar.tsx    # Radix Avatar wrapper
-│   │   ├── sidebar/
-│   │   │   └── Sidebar.tsx       # Collapsible sidebar with conversations & profile
-│   │   ├── ui/                   # Radix UI primitives (Button, Avatar, Dropdown, ScrollArea, Tooltip)
-│   │   └── workspace/            # Analytics chat workspace components
-│   │       ├── AssistantMessage.tsx # Response card (insights, thought process, SQL, tables)
-│   │       ├── ChatComposer.tsx     # Keyboard-first prompt composer
-│   │       ├── ChatWorkspace.tsx    # Message feed canvas & empty states
-│   │       ├── DataChart.tsx        # Recharts visualizer (Bar, Line, Area, Donut)
-│   │       └── UserMessage.tsx      # Yellow user message bubble
-│   ├── lib/
-│   │   └── utils.ts              # Tailwind class merging utility (clsx + twMerge)
-│   ├── public/                   # Static assets & brand vectors
-│   ├── types/
-│   │   └── chat.ts               # TypeScript data models (Message, ChartConfig, Conversation)
-│   ├── package.json              # Frontend scripts & dependencies
-│   ├── pnpm-lock.yaml            # pnpm lockfile
-│   ├── tsconfig.json             # TypeScript configuration
-│   ├── Dockerfile                # 3-stage Next.js 16 standalone image
-│   └── .dockerignore             # Frontend Docker ignore list
-│
-├── .github/                      # GitHub Actions automation workflows
-│   └── workflows/
-│       ├── ci.yml                # CI: uv sync + pytest, pnpm lint + build, Docker checks
-│       └── cd.yml                # CD: AWS ECR container push & ECS Fargate deployment
-│
-├── deploy/                       # Cloud deployment configurations & guides
-│   └── aws/
-│       ├── task-definition.json  # Amazon ECS Fargate task definition
-│       └── README.md             # AWS setup & deployment guide
-│
-├── specs/                        # Architecture & design specifications
-│   ├── 01-datapilot-ui-design.md # UI design system & token specifications
-│   ├── 02-backend-supabase-agent.md # Supabase Text-to-SQL architecture
-│   ├── 03_foundation_tools_state_cache.md # Tools suite, caching & AgentState
-│   └── 04_langgraph_nodes_and_graph.md    # LangGraph state machine & nodes
-│
-├── docker-compose.yml            # Multi-container orchestration (FastAPI + Next.js)
-├── .env.example                  # Environment configuration template
-├── AGENTS.md                     # Agent guidelines (this file)
-└── README.md                     # Project documentation & setup guide
-```
+Use Pydantic at boundaries. Do not keep connections, clients, credentials or raw exceptions in graph state. Compile once per application dependency configuration. Offload synchronous database calls from the async event loop. Do not create provider clients at import time or mutate environment variables while loading settings.
 
----
+## Data correctness and security
 
-## ⚙️ Package Managers & Execution Rules
+Calculate complete business aggregates in SQL before limiting displayed result rows. Ratios use sums, not means of row percentages. Preserve decimals for tables, use null for unknown or zero-denominator results, and disclose truncated displays. Execution success is not semantic proof.
 
-### 1. Backend: **`uv` only**
-- **Always** use `uv` for managing dependencies, running scripts, and executing tests.
-- **Do not** use raw `pip install` or activate virtual environments globally without `uv`.
-- Common commands:
-  - Install / Sync dependencies: `uv sync`
-  - Add dependency: `uv add <package-name>`
-  - Run development server: `uv run python main.py` or `uv run uvicorn main:app --reload`
-  - Run test suite: `uv run pytest`
+Enable a metric only after real column names, grain and business treatment are mapped in `METRIC_SCHEMA_NOTES`. Gross margin needs historical cost; net profit also needs expenses. Never invent unavailable costs or actions. Python owns inclusive-start/exclusive-end date ranges and business timezone policies.
 
-### 2. Frontend: **`pnpm` only**
-- **Always** use `pnpm` for frontend package management.
-- **Do not** use `npm`, `yarn`, or `bun`.
-- Common commands:
-  - Install dependencies: `pnpm install`
-  - Add dependency: `pnpm add <package-name>` (or `pnpm add -D <package-name>` for dev)
-  - Run development server: `pnpm dev`
-  - Build project: `pnpm build`
-  - Linting: `pnpm lint`
+Every generated query, including repairs, passes parser-based SQL validation. Use one read-only transaction, a local statement timeout, a business table allowlist, approved functions, bound parameters and a dedicated SELECT-only database role. Do not automatically create or migrate tables on the connected business database.
 
-### 3. Containerization: **Docker & Docker Compose**
-- Multi-container orchestration: `docker compose up --build`
-- Backend runs at `http://localhost:8000` (Healthcheck: `http://localhost:8000/health`)
-- Frontend runs at `http://localhost:3000`
+Never commit or expose .env files, database URLs, provider keys, session secrets, customer samples or raw database errors. Keep allowed CORS origins explicit. Public events contain short step labels, not hidden reasoning. Business action sending is out of scope; any future action requires server-enforced human approval.
 
-### 4. CI/CD & AWS Deployment
-- **Continuous Integration (`.github/workflows/ci.yml`)**: Runs `pytest` on Python 3.12, `pnpm lint` + `pnpm build` on Node 22, and builds Docker images on every PR/push.
-- **Continuous Deployment (`.github/workflows/cd.yml`)**: On merge to `main`, pushes production images to Amazon ECR and updates the Amazon ECS Fargate task definition.
+History is currently bounded in memory and isolated by signed browser cookies. Do not treat the cookie as business authorization. Never permit a client-chosen conversation ID to access another owner's history. Serialize turns per conversation. Durable history and authenticated authorization require separate implementation before multi-worker or multi-business deployment.
 
+## Frontend
 
----
+Use Server Components by default, with client components for state and interaction. Preserve strict TypeScript in `frontend/types/chat.ts`; avoid any. Keep the charcoal and golden-yellow design tokens and accessible Radix UI components. Charts support bar, line, area and donut; preserve missing data as gaps.
 
-## 🐍 Backend Guidelines (FastAPI, LangGraph & Security)
+All history/chat fetches use credentials. New conversations send null and adopt the server ID from the final SSE payload. Keep workspace response fields compatible when changing backend contracts.
 
-### 1. LangGraph State Machine Architecture
-- **State Definition (`app/agents/state.py`)**: All state transitions must adhere to `AgentState`. Use `Annotated[List[...], operator.add]` for accumulated lists (e.g. `messages`, `agent_thought_trace`).
-- **Graph Nodes (`app/agents/nodes/`)**:
-  - `router_node.py`: Classify user query into `data_query`, `statistical_analysis`, `email_action`, or `general_chat`.
-  - `sql_node.py`: Generate read-only PostgreSQL queries with cached schema context and execute via `db_tool.py`.
-  - `heal_node.py`: Diagnose execution errors and rewrite queries for up to 2 self-healing retries.
-  - `stats_node.py`: Execute sandboxed Python business math (`profit_margin`, `churn_rate`, `mom_growth`, `inventory_burn_rate`).
-  - `email_node.py`: Draft structured business action campaigns with Human-in-the-Loop (`requires_human_approval = True`).
-  - `synthesis_node.py`: Synthesize executive natural-language summaries in INR (₹) and configure visual chart recommendations (`ChartConfig`).
-- **Workflow Compilation (`app/agents/graph.py`)**: Compile graphs cleanly without cyclic traps or orphaned branches.
+## Verification
 
-### 2. Dual-Layer Security Guardrails
-- **Layer 1: Pre-Flight Input Guardrail (`app/guardrails/input_guard.py`)**:
-  - Sub-millisecond (<0.5ms) deterministic regex filtering before touching any LLM.
-  - Intercepts prompt injections (`<system>`, role-switching `DAN`), secret probes (`.env`, `GEMINI_API_KEY`), and SQL mutation syntax delimiters.
-  - Guarantees zero false positives for legitimate business queries (e.g. *"customers who dropped orders"*).
-- **Layer 2: Post-Generation SQL Guardrail (`app/guardrails/sql_guard.py`)**:
-  - Validates read-only execution (must start with `SELECT` or `WITH`).
-  - Blocks mutating keywords (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, `GRANT`, `REVOKE`).
-  - Blocks access to sensitive/internal schemas (`auth.*`, `vault.*`, `pg_shadow`, `pg_catalog.*`).
-  - Blocks multi-statement execution via unquoted semicolons.
-  - Auto-injects and clamps `LIMIT` clauses (default: 50, maximum: 100).
+Run `uv sync` and `uv run pytest`. Ordinary tests must not call paid models or a live business database. PostgreSQL integration tests require a disposable `TEST_DATABASE_URL` ending in `_test`; fixtures create/drop tables there. Verify startup, liveness and readiness without logging credentials. Live-model evaluations require explicit `--live` and are separate from CI.
 
-### 3. Tool Suite & Caching
-- **Tools (`app/tools/`)**:
-  - Keep tools pure, typed, and isolated.
-  - `db_tool.py`: Enforce `SET TRANSACTION READ ONLY;` and `SET statement_timeout = '5000ms';`. Sanitize Decimal, UUID, and date objects to JSON-serializable types.
-  - `python_tool.py`: Run calculations in a sandboxed namespace with blocked system/network built-ins.
-- **Caching (`app/cache.py`)**:
-  - `SchemaCache`: In-memory TTL cache for database schemas (default: 1 hour).
-  - `QueryCache`: In-memory TTL cache for identical user questions.
-
-### 4. API Endpoints & Streaming
-- Synchronous queries: `POST /api/chat` returns a full `ChatResponse`.
-- Real-time streaming: `POST /api/chat/stream` emits Server-Sent Events (SSE) containing step badges, thinking tokens, and final payload.
-
----
-
-## ⚛️ Frontend Guidelines (Next.js, React & Tailwind v4)
-
-### 1. Next.js App Router & Component Hierarchy
-- Use Server Components by default; add `"use client"` only when managing state, hooks, or client event listeners.
-- **Component Breakdown (`frontend/components/`)**:
-  - `brand/`: Brand mark and logo (`DataPilotLogo.tsx`).
-  - `sidebar/`: Collapsible sidebar navigation with conversation history and user profile (`Sidebar.tsx`).
-  - `workspace/`: Analytics workspace message feed (`ChatWorkspace.tsx`), yellow user bubble (`UserMessage.tsx`), assistant response card (`AssistantMessage.tsx`), interactive charts (`DataChart.tsx`), and prompt composer (`ChatComposer.tsx`).
-  - `ui/`: Accessible UI primitives (`button`, `avatar`, `dropdown-menu`, `scroll-area`, `tooltip`).
-
-### 2. Design System & Aesthetic Tokens
-- **Palette**:
-  - Canvas: Charcoal dark `#181A20`
-  - Sidebar Surface: `#1E222B`
-  - Cards & Composer: `#242834` (Border: `#323849`)
-  - Accent / Primary: Golden Yellow `#FEC50B` / `#F4B900`
-  - User Bubble: Golden Yellow `#FEC50B` with dark charcoal text `#09090B`
-- **Typography & Formatting**: Clean sans-serif, bold metric highlights (e.g. **₹45,200** or **$124,500**), structured tables, and collapsible thought traces.
-- **Visual Charts (`DataChart.tsx`)**: Responsive Recharts charts supporting `bar`, `line`, `area`, and `donut` configurations.
-
-### 3. TypeScript & Data Models
-- Maintain strict typing in `frontend/types/chat.ts` (`Message`, `ChartConfig`, `QueryDataRow`, `Conversation`).
-- Avoid `any` types.
-
----
-
-## 🔐 Security & Environment Rules
-
-- **Never expose secrets:** Never commit `.env`, `.env.local`, API keys (`GEMINI_API_KEY`, `GROQ_API_KEY`), or database credentials (`DATABASE_URL`).
-- **Git Hygiene:** Ensure `.venv`, `node_modules`, `.next`, build artifacts, and cache folders are strictly ignored in `.gitignore`.
-- **CORS Safety:** Maintain safe origin configurations in `main.py`.
-- **Human-in-the-Loop (HITL):** Any automated business action (such as email drafting or campaigns) must set `requires_human_approval = True`.
-
----
-
-## 🧪 Testing & Verification Checklist
-
-Before considering any backend or frontend task complete:
-1. **Backend Verification:**
-   - Run test suite: `uv run pytest` (verify input guardrail and SQL guardrail tests pass).
-   - Verify dependencies resolve cleanly: `uv sync`.
-   - Verify server startup and pool warming: `uv run python main.py`.
-2. **Frontend Verification:**
-   - Verify linting: `pnpm lint` (0 errors, 0 warnings).
-   - Verify build: `pnpm build`.
-   - Confirm UI components render cleanly across mobile and desktop viewports.
-3. **Documentation:**
-   - Keep `README.md`, `AGENTS.md`, and relevant specs updated whenever new routes, tools, nodes, or environment variables are added.
+For frontend changes run `pnpm lint` and `pnpm build` and verify changed flows in desktop/mobile layouts. Update README, this file, environment templates and the active spec when interfaces or settings change. Preserve unrelated work and secret files when cleaning up superseded code.

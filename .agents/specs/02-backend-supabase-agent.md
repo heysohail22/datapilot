@@ -1,3 +1,5 @@
+> Superseded by [05 Backend Rebuild Implementation](05_backend_rebuild_implementation.md). Retained as historical design context.
+
 # DataPilot — Backend Supabase Database Agent Specification
 
 ## 1. Purpose & Overview

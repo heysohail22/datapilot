@@ -1,3 +1,5 @@
+> Superseded by [05 Backend Rebuild Implementation](05_backend_rebuild_implementation.md). Retained as historical design context.
+
 # 📋 Spec 01: Foundation Layer (Tools Suite, Caching Layer & Agent State)
 
 > **Module 01 of DataPilot Architecture**  
