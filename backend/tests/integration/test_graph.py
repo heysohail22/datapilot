@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from app.agent.contracts import AnswerDraft, ExecutionResult
 from app.api.schemas import ChatRequest
-from conftest import FakeExecutor, FakeLLM, decision, draft
+from tests.helpers import FakeExecutor, FakeLLM, decision, draft
 
 
 def ask(service, message="Revenue last month", owner="alice", conversation_id=None):
@@ -18,6 +18,7 @@ def test_business_success(factory):
     result = ask(service)
     assert result.status == "answer"
     assert result.data == [{"revenue": "100000.00"}]
+    assert result.context is not None
     assert result.context.period_start.isoformat() == "2026-09-01"
     assert [c[0] for c in model.calls] == ["router", "sql_generator", "answer"]
     assert len(db.calls) == 1

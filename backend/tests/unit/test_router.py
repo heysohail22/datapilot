@@ -1,7 +1,7 @@
 from pydantic import ValidationError
 import pytest
 from app.agent.contracts import RouterDecision
-from conftest import decision
+from tests.helpers import decision
 
 
 @pytest.mark.parametrize(

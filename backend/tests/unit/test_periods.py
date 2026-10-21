@@ -1,6 +1,6 @@
 from datetime import date
 import pytest
-from conftest import decision
+from tests.helpers import decision
 from app.business.periods import resolve_plan
 
 

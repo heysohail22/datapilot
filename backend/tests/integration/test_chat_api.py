@@ -2,7 +2,7 @@ import json
 from fastapi.testclient import TestClient
 from app.main import create_app
 from app.guardrails.rate_limiter import rate_limiter
-from conftest import FakeCatalog, FakeExecutor, FakeLLM, decision, draft
+from tests.helpers import FakeCatalog, FakeExecutor, FakeLLM, decision, draft
 
 
 def application(settings, llm=None):
